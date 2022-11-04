@@ -1241,25 +1241,26 @@ jobs:
                     RELEASE_VERSION=$(get_release_version)
                   popd
 
-                  # if RELEASE_VERSION is a stable and a previous artifact already exists, we want to rename it.
+                  # if RELEASE_VERSION is a stable and a previous artifact already exists, we want to repackage the tarball with the right version.
                   TARBALL_NAME_FOR_MAIN=$(node ./scripts/hermes/get-tarball-name.js --buildType "$BUILD_TYPE" --releaseVersion "1000.0.0")
                   TARBALL_FILENAME=$(node ./scripts/hermes/get-tarball-name.js --buildType "$BUILD_TYPE" --releaseVersion "$RELEASE_VERSION")
                   if [[ "$RELEASE_VERSION" != "1000.0.0" ]] && [[ -n "$HERMES_TARBALL_ARTIFACTS_DIR/$TARBALL_NAME_FOR_MAIN" ]]; then
-                    mv "$HERMES_TARBALL_ARTIFACTS_DIR/$TARBALL_NAME_FOR_MAIN" "$HERMES_TARBALL_ARTIFACTS_DIR/$TARBALL_FILENAME"
-                  else
-                    echo "Packaging Hermes Apple frameworks for $BUILD_TYPE build type"
-
-                    TARBALL_OUTPUT_PATH=$(node ./scripts/hermes/create-tarball.js \
-                      --inputDir ./sdks/hermes \
-                      --buildType "$BUILD_TYPE" \
-                      --releaseVersion "$RELEASE_VERSION" \
-                      --outputDir $TARBALL_OUTPUT_DIR)
-
-                    echo "Hermes tarball saved to $TARBALL_OUTPUT_PATH"
-
-                    mkdir -p $HERMES_TARBALL_ARTIFACTS_DIR
-                    cp $TARBALL_OUTPUT_PATH $HERMES_TARBALL_ARTIFACTS_DIR/.
+                    rm -rf "$HERMES_TARBALL_ARTIFACTS_DIR/$TARBALL_NAME_FOR_MAIN"
                   fi
+
+                  echo "Packaging Hermes Apple frameworks for $BUILD_TYPE build type"
+
+                  TARBALL_OUTPUT_PATH=$(node ./scripts/hermes/create-tarball.js \
+                    --inputDir ./sdks/hermes \
+                    --buildType "$BUILD_TYPE" \
+                    --releaseVersion "$RELEASE_VERSION" \
+                    --outputDir $TARBALL_OUTPUT_DIR)
+
+                  echo "Hermes tarball saved to $TARBALL_OUTPUT_PATH"
+
+                  mkdir -p $HERMES_TARBALL_ARTIFACTS_DIR
+                  cp $TARBALL_OUTPUT_PATH $HERMES_TARBALL_ARTIFACTS_DIR/.
+
             - when:
                 condition:
                   equal: [ << parameters.flavor >>, "Debug"]
