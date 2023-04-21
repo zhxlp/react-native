@@ -7,6 +7,7 @@
 
 plugins {
   id("io.github.gradle-nexus.publish-plugin") version "1.1.0"
+  id("org.jetbrains.kotlinx.binary-compatibility-validator") version "0.13.1"
   id("com.android.library") version "7.4.2" apply false
   id("com.android.application") version "7.4.2" apply false
   id("de.undercouch.download") version "5.0.1" apply false
