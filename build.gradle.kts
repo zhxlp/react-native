@@ -6,7 +6,15 @@
  */
 
 val ndkPath by extra(System.getenv("ANDROID_NDK"))
-val ndkVersion by extra(System.getenv("ANDROID_NDK_VERSION"))
+val ndkVersion by extra {
+    when {
+        System.getenv("ANDROID_NDK_VERSION") != null -> System.getenv("ANDROID_NDK_VERSION")
+        // For M1 Users we need to use the NDK 24 which added support for aarch64
+        System.getProperty("os.arch") == "aarch64" -> "24.0.8215888"
+        // Otherwise we default to the side-by-side NDK version from AGP.`
+        else ->  "21.4.7075529"
+    }
+}
 
 buildscript {
     repositories {
