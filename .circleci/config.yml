@@ -6,6 +6,8 @@ version: 2.1
 
 orbs:
   win: circleci/windows@2.4.0
+  path-filtering: circleci/path-filtering@0.1.5
+
 
 # -------------------------
 #        REFERENCES
@@ -739,7 +741,7 @@ jobs:
 
       - store_test_results:
           path: ~/react-native/packages/react-native-gradle-plugin/build/test-results
-      
+
       - store_test_results:
           path: ~/react-native/packages/react-native/ReactAndroid/build/test-results
 
@@ -1093,6 +1095,11 @@ jobs:
       - HERMES_VERSION_FILE: "sdks/.hermesversion"
       - BUILD_FROM_SOURCE: true
     steps:
+      - when:
+          condition: << pipeline.parameters.skip_ci >>
+          steps:
+            - run:
+                command: circleci-agent step halt
       - run:
           name: Install dependencies
           command: |
@@ -1551,6 +1558,10 @@ parameters:
     default: false
     type: boolean
 
+  skip_ci:
+    default: true
+    type: boolean
+
 # -------------------------
 #        WORKFLOWS
 #
@@ -1574,7 +1585,13 @@ workflows:
         - equal: [ false, << pipeline.parameters.run_release_workflow >> ]
         - equal: [ false, << pipeline.parameters.run_nightly_workflow >> ]
     jobs:
-      - prepare_hermes_workspace
+      - path-filtering/filter:
+          base-revision: main
+          mapping: |
+            **/*.md skip_ci true
+      - prepare_hermes_workspace:
+          requires:
+            - path-filtering/filter
       - build_hermesc_linux:
           requires:
             - prepare_hermes_workspace
