@@ -79,7 +79,6 @@ const buildExecutor =
         ROOT_LOCATION,
       )
     ) {
-      // exit(1);
       // if I enter here, I want to throw an error upward
       throw new Error(
         `Package ${packageName} has unreleased changes. Please release it first.`,
