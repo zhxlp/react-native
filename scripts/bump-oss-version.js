@@ -51,7 +51,7 @@ let argv = yargs
       () => getBranchName(),
       "Not in git. You can't invoke bump-oss-versions.js from outside a git repo.",
     );
-    // exitIfNotOnReleaseBranch(branch);
+    exitIfNotOnReleaseBranch(branch);
     return true;
   }).argv;
 
