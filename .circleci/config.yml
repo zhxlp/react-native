@@ -34,6 +34,8 @@ references:
   attach_hermes_workspace: &attach_hermes_workspace
     attach_workspace:
       at: *hermes_workspace_root
+  xcodebuild_derived_data_path: &xcodebuild_derived_data_path
+    /tmp/build/xcodebuild_derived_data
 
   main_or_stable_only: &main_or_stable_only
     filters:
@@ -67,7 +69,9 @@ references:
     hermes_windows_cache_key: &hermes_windows_cache_key v2-hermes-{{ .Environment.CIRCLE_JOB }}-windows-{{ checksum "/Users/circleci/project/tmp/hermes/hermesversion" }}-{{ checksum "/tmp/react-native-version" }}
     hermes_tarball_debug_cache_key: &hermes_tarball_debug_cache_key v4-hermes-tarball-debug-{{ checksum "/tmp/hermes/hermesversion" }}-{{ checksum "/tmp/react-native-version" }}
     hermes_tarball_release_cache_key: &hermes_tarball_release_cache_key v3-hermes-tarball-release-{{ checksum "/tmp/hermes/hermesversion" }}-{{ checksum "/tmp/react-native-version" }}
-    pods_cache_key: &pods_cache_key v10-pods-{{ .Environment.CIRCLE_JOB }}-{{ checksum "packages/rn-tester/Podfile.lock.bak" }}-{{ checksum "packages/rn-tester/Podfile" }}
+    xcodebuild_cache_key: &xcodebuild_cache_key test-v2-xcodebuild-{{ .Environment.CIRCLE_JOB }}-{{ checksum "/tmp/week_year" }}
+    pods_cache_key: &pods_cache_key test-v10-pods-{{ .Environment.CIRCLE_JOB }}-{{ checksum "packages/rn-tester/Podfile.lock.bak" }}-{{ checksum "packages/rn-tester/Podfile" }}
+    cocoapods_cache_key: &cocoapods_cache_key test-v1-cocoapods-{{ .Environment.CIRCLE_JOB }}-{{ checksum "packages/rn-tester/Podfile.lock" }}-{{ checksum "packages/rn-tester/Podfile" }}
     windows_yarn_cache_key: &windows_yarn_cache_key v1-win-yarn-cache-{{ arch }}-{{ checksum "yarn.lock" }}
     windows_choco_cache_key: &windows_choco_cache_key v1-win-choco-cache-{{ .Environment.CIRCLE_JOB }}
     yarn_cache_key: &yarn_cache_key v5-yarn-cache-{{ .Environment.CIRCLE_JOB }}
@@ -489,6 +493,56 @@ commands:
             elif [[ -f $hermes_build_dir_ios/$hermesc_bin_path ]]; then
               export_hermesc_cmake_path $hermes_build_dir_ios
             fi
+  with_xcodebuild_cache:
+    description: "Add caching to iOS jobs to speed up builds"
+    parameters:
+      steps:
+        type: steps
+      xcodebuild_derived_data_path:
+        type: string
+        default: *xcodebuild_derived_data_path
+    steps:
+      - run:
+          name: Prepare Xcodebuild cache
+          command: |
+            WEEK=$(date +"%U")
+            YEAR=$(date +"%Y")
+            echo "$WEEK-$YEAR" > /tmp/week_year
+            mkdir -p << parameters.xcodebuild_derived_data_path >>
+      - brew_install:
+          package: git-tools
+      - restore_cache:
+          key: *xcodebuild_cache_key
+      - restore_cache:
+          key: *cocoapods_cache_key
+      # Cloning the repo updates the file modification time (mtime) from the ones stated in git to
+      # now, when they are copied in the file system.
+      # This script restores the mtime to the ones set in git.
+      - run:
+          name: Update mtime for incremental builds
+          command: |
+            echo "Restoring mtime in working directory $pwd"
+            git restore-mtime --force
+      # The device inode changes can invalidate the derived data
+      # https://stackoverflow.com/questions/53753511/is-it-possible-to-copy-an-xcode-derived-data-cache
+      - run:
+          name: Set IgnoreFileSystemDeviceInodeChanges flag
+          command: defaults write com.apple.dt.XCBuild IgnoreFileSystemDeviceInodeChanges -bool YES
+      - steps: << parameters.steps >>
+      # - when:
+      #     condition:
+      #       equal: [ "main", << pipeline.git.branch >> ]
+      #     steps:
+      - save_cache:
+          key: *xcodebuild_cache_key
+          paths:
+            - *xcodebuild_derived_data_path
+      - save_cache:
+          key: *cocoapods_cache_key
+          paths:
+            - packages/rn-tester/Pods
+
+
 
 # -------------------------
 #          JOBS
@@ -1054,25 +1108,32 @@ jobs:
   # same prebuilt for Hermes that we are going to use in the Release.
   test_ios_rntester_hermes_xcode_integration:
      executor: reactnativeios
+     parameters:
+       xcodebuild_derived_data_path:
+         type: string
+         default: *xcodebuild_derived_data_path
      steps:
       - checkout_code_with_cache
       - run_yarn
       - brew_install:
           package: cmake
-      - run:
-          name: Pod install
-          command: |
-            cd packages/rn-tester
-            rm -rf Pods Podfile.lock
-            bundle install
-            RCT_NEW_ARCH_ENABLED=1 bundle exec pod install
-      - run:
-          name: Build RNTester
-          command: |
-            xcodebuild build \
-              -workspace packages/rn-tester/RNTesterPods.xcworkspace \
-              -scheme RNTester \
-              -sdk iphonesimulator
+      - with_xcodebuild_cache:
+          xcodebuild_derived_data_path: << parameters.xcodebuild_derived_data_path >>
+          steps:
+            - run:
+                name: Pod install
+                command: |
+                  cd packages/rn-tester
+                  bundle install
+                  RCT_NEW_ARCH_ENABLED=1 bundle exec pod install
+            - run:
+                name: Build RNTester
+                command: |
+                  xcodebuild build \
+                    -workspace packages/rn-tester/RNTesterPods.xcworkspace \
+                    -scheme RNTester \
+                    -sdk iphonesimulator \
+                    -derivedDataPath << parameters.xcodebuild_derived_data_path >>
 
   test_ios_rntester:
     executor: reactnativeios
@@ -1752,239 +1813,239 @@ workflows:
         - equal: [ false, << pipeline.parameters.run_release_workflow >> ]
         - equal: [ false, << pipeline.parameters.run_nightly_workflow >> ]
     jobs:
-      - prepare_package_for_release:
-          name: prepare_package_for_release
-          version: ''
-          latest : false
-          dryrun: true
-      - prepare_hermes_workspace
+      # - prepare_package_for_release:
+      #     name: prepare_package_for_release
+      #     version: ''
+      #     latest : false
+      #     dryrun: true
+      # - prepare_hermes_workspace
       - test_ios_rntester_hermes_xcode_integration
-      - build_hermesc_linux:
-          requires:
-            - prepare_hermes_workspace
-      - build_hermes_macos:
-          requires:
-            - prepare_hermes_workspace
-          matrix:
-            parameters:
-              flavor: ["Debug", "Release"]
-      - build_hermesc_windows:
-          requires:
-            - prepare_hermes_workspace
-      - build_npm_package:
-          # Build a release package on every untagged commit, but do not publish to npm.
-          release_type: "dry-run"
-          requires:
-            - build_hermesc_linux
-            - build_hermes_macos
-            - build_hermesc_windows
-      - test_js:
-          run_disabled_tests: false
-      - test_android
-      - test_android_docker_image
-      - test_e2e_ios:
-          ruby_version: "2.7.7"
-      - test_e2e_android
-      - test_android_template:
-          requires:
-            - build_npm_package
-          matrix:
-            parameters:
-              architecture: ["NewArch", "OldArch"]
-              jsengine: ["Hermes", "JSC"]
-              flavor: ["Debug", "Release"]
-      - test_ios_template:
-          requires:
-            - build_npm_package
-          name: "Test Template with Ruby 3.2.0"
-          ruby_version: "3.2.0"
-          architecture: "NewArch"
-          flavor: "Debug"
-      - test_ios_template:
-          requires:
-            - build_npm_package
-          matrix:
-            parameters:
-              architecture: ["NewArch", "OldArch"]
-              flavor: ["Debug", "Release"]
-              jsengine: ["Hermes", "JSC"]
-              flipper: ["WithFlipper", "WithoutFlipper"]
-              use_frameworks: ["StaticLibraries", "DynamicFrameworks"]
-            exclude:
-              - architecture: "NewArch"
-                flavor: "Release"
-                jsengine: "Hermes"
-                flipper: "WithFlipper"
-                use_frameworks: "StaticLibraries"
-              - architecture: "NewArch"
-                flavor: "Release"
-                jsengine: "Hermes"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-              - architecture: "NewArch"
-                flavor: "Release"
-                jsengine: "JSC"
-                flipper: "WithFlipper"
-                use_frameworks: "StaticLibraries"
-              - architecture: "NewArch"
-                flavor: "Release"
-                jsengine: "JSC"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-              - architecture: "OldArch"
-                flavor: "Release"
-                jsengine: "Hermes"
-                flipper: "WithFlipper"
-                use_frameworks: "StaticLibraries"
-              - architecture: "OldArch"
-                flavor: "Release"
-                jsengine: "Hermes"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-              - architecture: "OldArch"
-                flavor: "Release"
-                jsengine: "JSC"
-                flipper: "WithFlipper"
-                use_frameworks: "StaticLibraries"
-              - architecture: "OldArch"
-                flavor: "Release"
-                jsengine: "JSC"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-              - architecture: "NewArch"
-                flavor: "Debug"
-                jsengine: "Hermes"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-              - architecture: "NewArch"
-                flavor: "Debug"
-                jsengine: "JSC"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-              - architecture: "OldArch"
-                flavor: "Debug"
-                jsengine: "Hermes"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-              - architecture: "OldArch"
-                flavor: "Debug"
-                jsengine: "JSC"
-                flipper: "WithFlipper"
-                use_frameworks: "DynamicFrameworks"
-      - test_ios_rntester:
-          requires:
-            - build_hermes_macos
-          name: "Test RNTester with Ruby 3.2.0"
-          ruby_version: "3.2.0"
-          architecture: "NewArch"
-      - test_ios_rntester:
-          requires:
-            - build_hermes_macos
-          matrix:
-            parameters:
-              architecture: ["NewArch", "OldArch"]
-              jsengine: ["Hermes", "JSC"]
-              use_frameworks: ["StaticLibraries", "DynamicFrameworks"]
-      - test_ios:
-          name: "Test iOS with Ruby 3.2.0"
-          run_unit_tests: true
-          requires:
-            - build_hermes_macos
-          ruby_version: "3.2.0"
-      - test_ios:
-          run_unit_tests: true
-          requires:
-            - build_hermes_macos
-          matrix:
-            parameters:
-              jsengine: ["Hermes", "JSC"]
-      - test_js:
-          name: test_js_prev_lts
-          executor: nodeprevlts
-      - test_windows:
-          run_disabled_tests: false
+  #     - build_hermesc_linux:
+  #         requires:
+  #           - prepare_hermes_workspace
+  #     - build_hermes_macos:
+  #         requires:
+  #           - prepare_hermes_workspace
+  #         matrix:
+  #           parameters:
+  #             flavor: ["Debug", "Release"]
+  #     - build_hermesc_windows:
+  #         requires:
+  #           - prepare_hermes_workspace
+  #     - build_npm_package:
+  #         # Build a release package on every untagged commit, but do not publish to npm.
+  #         release_type: "dry-run"
+  #         requires:
+  #           - build_hermesc_linux
+  #           - build_hermes_macos
+  #           - build_hermesc_windows
+  #     - test_js:
+  #         run_disabled_tests: false
+  #     - test_android
+  #     - test_android_docker_image
+  #     - test_e2e_ios:
+  #         ruby_version: "2.7.7"
+  #     - test_e2e_android
+  #     - test_android_template:
+  #         requires:
+  #           - build_npm_package
+  #         matrix:
+  #           parameters:
+  #             architecture: ["NewArch", "OldArch"]
+  #             jsengine: ["Hermes", "JSC"]
+  #             flavor: ["Debug", "Release"]
+  #     - test_ios_template:
+  #         requires:
+  #           - build_npm_package
+  #         name: "Test Template with Ruby 3.2.0"
+  #         ruby_version: "3.2.0"
+  #         architecture: "NewArch"
+  #         flavor: "Debug"
+  #     - test_ios_template:
+  #         requires:
+  #           - build_npm_package
+  #         matrix:
+  #           parameters:
+  #             architecture: ["NewArch", "OldArch"]
+  #             flavor: ["Debug", "Release"]
+  #             jsengine: ["Hermes", "JSC"]
+  #             flipper: ["WithFlipper", "WithoutFlipper"]
+  #             use_frameworks: ["StaticLibraries", "DynamicFrameworks"]
+  #           exclude:
+  #             - architecture: "NewArch"
+  #               flavor: "Release"
+  #               jsengine: "Hermes"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "StaticLibraries"
+  #             - architecture: "NewArch"
+  #               flavor: "Release"
+  #               jsengine: "Hermes"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #             - architecture: "NewArch"
+  #               flavor: "Release"
+  #               jsengine: "JSC"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "StaticLibraries"
+  #             - architecture: "NewArch"
+  #               flavor: "Release"
+  #               jsengine: "JSC"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #             - architecture: "OldArch"
+  #               flavor: "Release"
+  #               jsengine: "Hermes"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "StaticLibraries"
+  #             - architecture: "OldArch"
+  #               flavor: "Release"
+  #               jsengine: "Hermes"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #             - architecture: "OldArch"
+  #               flavor: "Release"
+  #               jsengine: "JSC"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "StaticLibraries"
+  #             - architecture: "OldArch"
+  #               flavor: "Release"
+  #               jsengine: "JSC"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #             - architecture: "NewArch"
+  #               flavor: "Debug"
+  #               jsengine: "Hermes"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #             - architecture: "NewArch"
+  #               flavor: "Debug"
+  #               jsengine: "JSC"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #             - architecture: "OldArch"
+  #               flavor: "Debug"
+  #               jsengine: "Hermes"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #             - architecture: "OldArch"
+  #               flavor: "Debug"
+  #               jsengine: "JSC"
+  #               flipper: "WithFlipper"
+  #               use_frameworks: "DynamicFrameworks"
+  #     - test_ios_rntester:
+  #         requires:
+  #           - build_hermes_macos
+  #         name: "Test RNTester with Ruby 3.2.0"
+  #         ruby_version: "3.2.0"
+  #         architecture: "NewArch"
+  #     - test_ios_rntester:
+  #         requires:
+  #           - build_hermes_macos
+  #         matrix:
+  #           parameters:
+  #             architecture: ["NewArch", "OldArch"]
+  #             jsengine: ["Hermes", "JSC"]
+  #             use_frameworks: ["StaticLibraries", "DynamicFrameworks"]
+  #     - test_ios:
+  #         name: "Test iOS with Ruby 3.2.0"
+  #         run_unit_tests: true
+  #         requires:
+  #           - build_hermes_macos
+  #         ruby_version: "3.2.0"
+  #     - test_ios:
+  #         run_unit_tests: true
+  #         requires:
+  #           - build_hermes_macos
+  #         matrix:
+  #           parameters:
+  #             jsengine: ["Hermes", "JSC"]
+  #     - test_js:
+  #         name: test_js_prev_lts
+  #         executor: nodeprevlts
+  #     - test_windows:
+  #         run_disabled_tests: false
 
-  # This workflow should only be triggered by release script
-  package_release:
-    when: << pipeline.parameters.run_release_workflow >>
-    jobs:
-      # This job will push a tag that will trigger the publish_release workflow
-      - prepare_package_for_release:
-          name: prepare_package_for_release
-          version: << pipeline.parameters.release_version >>
-          latest : << pipeline.parameters.release_latest >>
+  # # This workflow should only be triggered by release script
+  # package_release:
+  #   when: << pipeline.parameters.run_release_workflow >>
+  #   jobs:
+  #     # This job will push a tag that will trigger the publish_release workflow
+  #     - prepare_package_for_release:
+  #         name: prepare_package_for_release
+  #         version: << pipeline.parameters.release_version >>
+  #         latest : << pipeline.parameters.release_latest >>
 
-  # This job will run only when a tag is published due to all the jobs being filtered.
-  publish_release:
-    jobs:
-      - prepare_hermes_workspace:
-          filters: *only_release_tags
-      - build_hermesc_linux:
-          filters: *only_release_tags
-          requires:
-            - prepare_hermes_workspace
-      - build_hermes_macos:
-          filters: *only_release_tags
-          requires:
-            - prepare_hermes_workspace
-          matrix:
-            parameters:
-              flavor: ["Debug", "Release"]
-      - build_hermesc_windows:
-          filters: *only_release_tags
-          requires:
-            - prepare_hermes_workspace
-      # This job will trigger when a version tag is pushed (by package_release)
-      - build_npm_package:
-          name: build_and_publish_npm_package
-          release_type: "release"
-          filters: *only_release_tags
-          requires:
-            - build_hermesc_linux
-            - build_hermes_macos
-            - build_hermesc_windows
+  # # This job will run only when a tag is published due to all the jobs being filtered.
+  # publish_release:
+  #   jobs:
+  #     - prepare_hermes_workspace:
+  #         filters: *only_release_tags
+  #     - build_hermesc_linux:
+  #         filters: *only_release_tags
+  #         requires:
+  #           - prepare_hermes_workspace
+  #     - build_hermes_macos:
+  #         filters: *only_release_tags
+  #         requires:
+  #           - prepare_hermes_workspace
+  #         matrix:
+  #           parameters:
+  #             flavor: ["Debug", "Release"]
+  #     - build_hermesc_windows:
+  #         filters: *only_release_tags
+  #         requires:
+  #           - prepare_hermes_workspace
+  #     # This job will trigger when a version tag is pushed (by package_release)
+  #     - build_npm_package:
+  #         name: build_and_publish_npm_package
+  #         release_type: "release"
+  #         filters: *only_release_tags
+  #         requires:
+  #           - build_hermesc_linux
+  #           - build_hermes_macos
+  #           - build_hermesc_windows
 
-  analysis:
-    when:
-      and:
-        - equal: [ false, << pipeline.parameters.run_release_workflow >> ]
-        - equal: [ false, << pipeline.parameters.run_nightly_workflow >> ]
-    jobs:
-      # Run lints on every commit
-      - analyze_code
+  # analysis:
+  #   when:
+  #     and:
+  #       - equal: [ false, << pipeline.parameters.run_release_workflow >> ]
+  #       - equal: [ false, << pipeline.parameters.run_nightly_workflow >> ]
+  #   jobs:
+  #     # Run lints on every commit
+  #     - analyze_code
 
-      # Run code checks on PRs
-      - analyze_pr
+  #     # Run code checks on PRs
+  #     - analyze_pr
 
-  nightly:
-    when: << pipeline.parameters.run_nightly_workflow >>
-    jobs:
-      - nightly_job
-      - prepare_hermes_workspace
-      - build_hermesc_linux:
-          requires:
-            - prepare_hermes_workspace
-      - build_hermes_macos:
-          requires:
-            - prepare_hermes_workspace
-          matrix:
-            parameters:
-              flavor: ["Debug", "Release"]
-      - build_hermesc_windows:
-          requires:
-            - prepare_hermes_workspace
-      - build_npm_package:
-          release_type: "nightly"
-          requires:
-            - build_hermesc_linux
-            - build_hermes_macos
-            - build_hermesc_windows
+  # nightly:
+  #   when: << pipeline.parameters.run_nightly_workflow >>
+  #   jobs:
+  #     - nightly_job
+  #     - prepare_hermes_workspace
+  #     - build_hermesc_linux:
+  #         requires:
+  #           - prepare_hermes_workspace
+  #     - build_hermes_macos:
+  #         requires:
+  #           - prepare_hermes_workspace
+  #         matrix:
+  #           parameters:
+  #             flavor: ["Debug", "Release"]
+  #     - build_hermesc_windows:
+  #         requires:
+  #           - prepare_hermes_workspace
+  #     - build_npm_package:
+  #         release_type: "nightly"
+  #         requires:
+  #           - build_hermesc_linux
+  #           - build_hermes_macos
+  #           - build_hermesc_windows
 
-  publish_bumped_packages:
-    when:
-      and:
-        - equal: [ false, << pipeline.parameters.run_release_workflow >> ]
-        - equal: [ false, << pipeline.parameters.run_nightly_workflow >> ]
-    jobs:
-      - find_and_publish_bumped_packages:
-          <<: *main_or_stable_only
+  # publish_bumped_packages:
+  #   when:
+  #     and:
+  #       - equal: [ false, << pipeline.parameters.run_release_workflow >> ]
+  #       - equal: [ false, << pipeline.parameters.run_nightly_workflow >> ]
+  #   jobs:
+  #     - find_and_publish_bumped_packages:
+  #         <<: *main_or_stable_only
