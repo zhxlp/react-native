@@ -218,6 +218,12 @@ ScrollViewProps::ScrollViewProps(
           rawProps,
           "scrollToOverflowEnabled",
           sourceProps.scrollToOverflowEnabled,
+          {})),
+      inverted(convertRawProp(
+          context,
+          rawProps,
+          "inverted",
+          sourceProps.inverted,
           {})) {}
 
 #pragma mark - DebugStringConvertible
@@ -337,7 +343,9 @@ SharedDebugStringConvertibleList ScrollViewProps::getDebugProps() const {
           debugStringConvertibleItem(
               "snapToStart", snapToStart, defaultScrollViewProps.snapToStart),
           debugStringConvertibleItem(
-              "snapToEnd", snapToEnd, defaultScrollViewProps.snapToEnd)};
+              "snapToEnd", snapToEnd, defaultScrollViewProps.snapToEnd),
+          debugStringConvertibleItem(
+              "inverted", inverted, defaultScrollViewProps.inverted)};
 }
 #endif
 

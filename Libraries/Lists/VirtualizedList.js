@@ -10,6 +10,7 @@
 
 const Batchinator = require('../Interaction/Batchinator');
 const FillRateHelper = require('./FillRateHelper');
+const Platform = require('../Utilities/Platform');
 const ReactNative = require('../Renderer/shims/ReactNative');
 const RefreshControl = require('../Components/RefreshControl/RefreshControl');
 const ScrollView = require('../Components/ScrollView/ScrollView');
@@ -2119,7 +2120,15 @@ function describeNestedLists(childList: {
 
 const styles = StyleSheet.create({
   verticallyInverted: {
-    transform: [{scaleY: -1}],
+    transform:
+      // Android 13 Bug Workaround:
+      // On Android, we need to invert both axes to mitigate a native bug
+      // that could lead to ANRs.
+      // Simply using scaleY: -1 leads to the application of scaleY and
+      // rotationX natively, resulting in the ANR.
+      // For more information, refer to the following Android tracking issue:
+      // https://issuetracker.google.com/issues/287304310
+      Platform.OS === 'android' ? [{scale: -1}] : [{scaleY: -1}],
   },
   horizontallyInverted: {
     transform: [{scaleX: -1}],
