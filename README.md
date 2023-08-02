@@ -21,6 +21,12 @@ git checkout 0.66-stable
 yarn
 ```
 
+- modify version
+
+```
+./scripts/bump-oss-version.js -v 0.66.6
+```
+
 ## build 
 
 - build android aar
@@ -33,8 +39,10 @@ docker run --rm --name rn-build -v $PWD:/pwd -v gradle_home:/root/.gradle -w /pw
 
 ```
 npm pack
-mv react-native-0.66.5.tgz "react-native-0.66.5-$(date '+%Y%m%d%H%M').tgz"
 ```
+
+- upload react-native-0.66.6.tgz
+
 
 ## use
 
@@ -44,12 +52,15 @@ mv react-native-0.66.5.tgz "react-native-0.66.5-$(date '+%Y%m%d%H%M').tgz"
 ...
 "dependencies": {
 ...
-"react-native": "https://test.com/react-native/react-native-0.66.5-202308011817.tgz",
+"react-native": "https://test.com/react-native/react-native-0.66.6.tgz",
 ...
 ```
 
  - Reinstall NPM dependencies
 
  ```
+ rm -rf node_modules
  yarn --force
+ cd ios
+ pod install
  ```

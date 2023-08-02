@@ -110,3 +110,6 @@ package-lock.json
 
 # Android memory profiler files
 *.hprof
+
+# react native tar
+/react-native-*.tgz
